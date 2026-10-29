@@ -1,7 +1,7 @@
-# Fichiers a ne jamais publier
-cle_carto.txt
+# Environnement Python
 .venv/
+__pycache__/
+
+# Donnees BAAC et resultats d'analyse (regeneres par les scripts)
 *.csv
 resultats_baac_*/
-__pycache__/
-secours_proches.py
