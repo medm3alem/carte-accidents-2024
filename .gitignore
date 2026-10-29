@@ -1,0 +1,7 @@
+# Fichiers a ne jamais publier
+cle_carto.txt
+.venv/
+*.csv
+resultats_baac_*/
+__pycache__/
+secours_proches.py
