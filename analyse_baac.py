@@ -4,18 +4,15 @@ r"""
 analyse_baac.py - Analyse "post-accident" du fichier BAAC (ONISR)
 Hackathon Renault 2026 : les premieres minutes apres un accident.
 
-Script d'analyse prepare avec l'aide d'une IA (Claude). A signaler
-conformement aux regles du hackathon.
-
 INSTALLATION (une seule fois) :
-    pip install pandas matplotlib
+    pip install -r requirements.txt
 
 UTILISATION (PowerShell) :
     python analyse_baac.py "C:\Users\USER\Downloads\data 2024"
 
 Le dossier doit contenir les 4 CSV du BAAC d'une meme annee :
     caract-AAAA.csv, lieux-AAAA.csv, vehicules-AAAA.csv, usagers-AAAA.csv
-(les autres CSV du dossier sont simplement inspectes).
+Facultatif : AAAA.csv (age et code CNIT des vehicules, fichier complementaire ONISR).
 
 RESULTATS (crees dans <dossier>\resultats_baac_AAAA) :
     synthese.md          -> le resume chiffre, a renvoyer pour la suite
@@ -670,64 +667,8 @@ def a_parc(A, U, V, ctx):
            f"{vtvu['age'].median():.0f} ans, **{part7(vtvu['age'])} % ont 7 ans ou plus**",
            "", md_table(tcat), "", "### Age des voitures et VU", md_table(dist)]
 
-    # --- Tentative de rapprochement avec le BAAC (pas de cle commune) ----------
-    lettres_V = (V.assign(l=V["num_veh"].astype(str).str.strip().str[:1].str.upper())
-                 .groupby("Num_Acc")["l"].agg(set))
-    lettres_P = P.groupby("id")["lettre"].agg(set)
-    ordre_P = P["id"].drop_duplicates().tolist()
-    num_acc = A["Num_Acc"].tolist()
-    meilleur = None
-    if len(ordre_P) == len(num_acc):
-        cands = {"ordre du fichier": ordre_P,
-                 "ordre numerique": sorted(ordre_P, key=lambda x: int(x) if x.isdigit() else -1)}
-        for nom, ids in cands.items():
-            ok = np.mean([lettres_P[i] <= lettres_V.get(n, set())
-                          for n, i in zip(num_acc, ids)])
-            if meilleur is None or ok > meilleur[1]:
-                meilleur = (nom, ok, dict(zip(ids, num_acc)))
-    if meilleur is None:
-        txt.append(f"\nRapprochement BAAC impossible : {n_acc2} accidents dans ce fichier "
-                   f"contre {len(num_acc)} dans le BAAC.")
-        return "\n".join(txt)
-    nom, taux_lettres, corr = meilleur
-    P["Num_Acc"] = P["id"].map(corr)
-    Vk = V.assign(lettre=V["num_veh"].astype(str).str.strip().str[:1].str.upper())
-    Vk = Vk.drop_duplicates(["Num_Acc", "lettre"])[["Num_Acc", "lettre", "catv"]]
-    J = P.merge(Vk, on=["Num_Acc", "lettre"], how="left")
-    vt = J[J["cat"] == "VT"]
-    taux_vt = (vt["catv"] == 7).mean() if len(vt) else np.nan
-    valide = taux_lettres >= 0.98 and taux_vt >= 0.90
-    txt.append(f"\n### Rapprochement avec le BAAC ({nom})\n"
-               f"- Accidents dont les lettres de vehicules concordent : {100*taux_lettres:.1f} %\n"
-               f"- Vehicules 'VT' retrouves comme voiture (catv 7) : {100*taux_vt:.1f} %\n"
-               f"- Rapprochement **{'VALIDE' if valide else 'REJETE'}** "
-               "(seuils : 98 % et 90 %)")
-    if not valide:
-        return "\n".join(txt)
-
-    J = J.merge(A[["Num_Acc", "mortel", "vehicule_seul", "hors_agglo", "nuit"]],
-                on="Num_Acc", how="left")
-    jv = J[J["cat"].isin(["VT", "VU"])]
-    situ = {"Tous les accidents": jv,
-            "Accidents mortels": jv[jv["mortel"] == True],  # noqa: E712
-            "Mortels, vehicule seul hors agglo": jv[(jv["mortel"] == True)  # noqa: E712
-                                                   & (jv["vehicule_seul"] == True)
-                                                   & (jv["hors_agglo"] == True)],
-            "... et de nuit": jv[(jv["mortel"] == True) & (jv["vehicule_seul"] == True)
-                                 & (jv["hors_agglo"] == True) & (jv["nuit"] == True)]}
-    ts = pd.DataFrame({"voitures_et_VU": {k: len(v) for k, v in situ.items()},
-                       "part_7_ans_et_plus": {k: part7(v["age"]) for k, v in situ.items()}})
-    sauver(ts, out, "13c_age_selon_situation")
-    # Tues a bord de voitures/VU de 7 ans et plus
-    Uk = U[U["catu"].isin([1, 2])].assign(
-        lettre=U["num_veh"].astype(str).str.strip().str[:1].str.upper())
-    UJ = Uk.merge(J[["Num_Acc", "lettre", "cat", "age"]].drop_duplicates(["Num_Acc", "lettre"]),
-                  on=["Num_Acc", "lettre"], how="inner")
-    UJ = UJ[UJ["cat"].isin(["VT", "VU"])]
-    t7 = int(UJ.loc[UJ["age"] >= 7, "tue"].sum())
-    txt += ["", "### Voitures et VU de 7 ans et plus selon la situation", md_table(ts),
-            f"\n- Tues a bord de voitures / VU de 7 ans et plus : **{t7}** sur "
-            f"{int(UJ['tue'].sum())} tues a bord de voitures / VU rapproches"]
+    txt.append("\nCe fichier ne peut pas etre relie aux accidents du BAAC "
+               "(identifiants differents) : statistiques globales uniquement.")
     return "\n".join(txt)
 
 
@@ -889,20 +830,6 @@ def main():
         except Exception as e:  # une analyse qui echoue ne bloque pas les autres
             blocs += [f"## {titre}", f"**Analyse impossible** : {e!r}",
                       "```", traceback.format_exc(limit=3), "```", ""]
-
-    # --- Autres CSV du dossier ------------------------------------------------
-    autres = [p for p in dossier.glob("*.csv") if p not in chemins.values()]
-    if autres:
-        blocs.append("## Autres fichiers CSV du dossier")
-        for p in autres:
-            try:
-                d = lire_csv(p)
-                blocs.append(f"- `{p.name}` : {len(d):,} lignes, colonnes : "
-                             f"{', '.join(d.columns[:30])}")
-                blocs.append("  - premiere ligne : " + " | ".join(
-                    str(v) for v in d.iloc[0].values[:15]) if len(d) else "")
-            except Exception as e:
-                blocs.append(f"- `{p.name}` : illisible ({e!r})")
 
     # --- Export joint pour un modele de gravite ----------------------------
     joint = out / f"baac_{annee}_usagers_joint.csv"

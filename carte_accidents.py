@@ -1,32 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 r"""
-carte_accidents.py - Carte interactive des accidents du BAAC (croix rouges)
-Hackathon Renault 2026. Script prepare avec l'aide d'une IA (Claude), a signaler.
+carte_accidents.py - Carte interactive des accidents du BAAC (une croix par accident)
+Hackathon Renault 2026.
 
-UTILISATION (PowerShell, dans le meme dossier que analyse_baac.py) :
-    python carte_accidents.py "C:\Users\USER\Downloads\data 2024"
+UTILISATION (PowerShell, dans le dossier du projet) :
+    python carte_accidents.py "C:\chemin\vers\data 2024"
+        -> ecrit docs\index.html et l'ouvre sur http://localhost:8000
+    python carte_accidents.py "C:\chemin\vers\data 2024" --sans-apercu
+        -> ecrit seulement docs\index.html (a pousser sur GitHub Pages)
 
-Produit <dossier>\resultats_baac_AAAA\carte_accidents_AAAA.html
--> a ouvrir dans un navigateur (connexion internet necessaire pour le fond de carte).
-
-Fond de carte : OpenStreetMap par defaut, AUCUNE cle necessaire.
-Optionnel - fond CARTO (gratuit mais cle obligatoire depuis aout 2026) :
-    python carte_accidents.py "C:\...\data 2024" --cle-carto VOTRE_CLE
-ou, plus simple, mettre la cle seule dans un fichier "cle_carto.txt" a cote de ce
-script : elle est alors lue automatiquement (ne pas partager ce fichier).
-Attention : la cle est alors ecrite dans le fichier HTML genere.
-
-Sur la carte :
-  - une croix rouge par accident (grande et foncee = mortel, petite = blesses)
-  - filtres : gravite, vehicule seul hors agglomeration, nuit
-  - clic sur une croix : date, heure, lieu, route, luminosite, tues, blesses
+La carte : croix colorees par type de route (taille = gravite), filtres (gravite,
+type de route, vehicules, obstacles, heure, situation), detail BAAC de chaque
+accident, et recherche EN DIRECT des secours autour d'un accident (casernes IGN,
+urgences OpenStreetMap, trajets par la route IGN ou OSRM). Aucune cle API.
 """
 
 import argparse
 import http.server
 import json
-import os
 import re
 import sys
 import time
@@ -38,12 +30,11 @@ from pathlib import Path
 import pandas as pd
 
 # Fonctions de lecture partagees avec le script d'analyse
-from analyse_baac import AGG, CATR, LUM, en_nombres, lire_csv, mode_depuis_catv, trouver
+from analyse_baac import en_nombres, lire_csv, mode_depuis_catv, trouver
 
 
-def charger_accidents(dossier, details=False):
-    """Une ligne par accident geolocalise, avec tues, blesses et situations.
-    details=True : renvoie aussi les tables vehicules et usagers."""
+def charger_accidents(dossier):
+    """Accidents geolocalises (une ligne par accident) + tables vehicules et usagers."""
     chemins = {k: trouver(dossier, m) for k, m in
                {"caract": r"^carac", "lieux": r"^lieu",
                 "vehicules": r"^vehic", "usagers": r"^usag"}.items()}
@@ -89,9 +80,7 @@ def charger_accidents(dossier, details=False):
                  + A["mois"].fillna(0).astype(int).astype(str).str.zfill(2) + "/"
                  + A["an"].fillna(0).astype(int).astype(str) + " " + A["hrmn"].fillna(""))
     annee = int(A["an"].mode().iloc[0]) if A["an"].notna().any() else 0
-    if details:
-        return A, annee, veh, usa
-    return A, annee
+    return A, annee, veh, usa
 
 
 # Groupes de vehicules pour le filtre de la carte (un bit par groupe)
@@ -143,7 +132,7 @@ def details_vehicules(veh, usa, annee):
 
 
 def preparer(dossier):
-    A, annee, veh, usa = charger_accidents(dossier, details=True)
+    A, annee, veh, usa = charger_accidents(dossier)
     par_acc, masques, obstacles = details_vehicules(veh, usa, annee)
     def code(x):
         return int(x) if pd.notna(x) else 0
@@ -335,7 +324,10 @@ HTML = r"""<!doctype html>
 </div>
 <script>
 const D = __DATA__;
-const LUM = __LUM__, AGG = __AGG__, CATR = __CATR__;
+const LUM = {1: "Plein jour", 2: "Crépuscule ou aube", 3: "Nuit sans éclairage public",
+  4: "Nuit, éclairage public non allumé", 5: "Nuit, éclairage public allumé"};
+const CATR = {1: "Autoroute", 2: "Route nationale", 3: "Route départementale", 4: "Voie communale",
+  5: "Hors réseau public", 6: "Parc de stationnement", 7: "Route de métropole urbaine", 9: "Autre"};
 const ZONES = {
   metro:[[41.3,-5.3],[51.2,9.7]], gp:[[15.8,-61.85],[16.55,-61.0]], mq:[[14.38,-61.25],[14.9,-60.8]],
   gf:[[2.1,-54.6],[5.8,-51.6]], re:[[-21.4,55.2],[-20.85,55.85]], yt:[[-13.0,45.0],[-12.6,45.3]],
@@ -362,13 +354,7 @@ const fonds = {
   "Plan IGN": L.tileLayer(IGN("GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2", "image/png"),
     { maxZoom: 19, maxNativeZoom: 18, attribution: IGN_ATTR })
 };
-const CLE_CARTO = "__CLE_CARTO__";
-if (CLE_CARTO) {
-  fonds["CARTO clair"] = L.tileLayer(
-    "https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=" + encodeURIComponent(CLE_CARTO),
-    { maxZoom: 19, attribution: OSM_ATTR + ' &copy; <a href="https://carto.com/attributions">CARTO</a>' });
-}
-(CLE_CARTO ? fonds["CARTO clair"] : fonds["OpenStreetMap (gris)"]).addTo(map);
+fonds["OpenStreetMap (gris)"].addTo(map);
 L.control.layers(fonds, null, { position: "bottomleft" }).addTo(map);
 
 const $ = id => document.getElementById(id);
@@ -391,10 +377,6 @@ const OBSF = {0: "sans objet", 1: "véhicule en stationnement", 2: "arbre", 3: "
   11: "îlot, refuge, borne haute", 12: "bordure de trottoir", 13: "fossé, talus, paroi rocheuse",
   14: "autre obstacle fixe sur chaussée", 15: "autre obstacle fixe sur trottoir ou accotement",
   16: "sortie de chaussée sans obstacle", 17: "buse, tête d'aqueduc"};
-const OBSMOB = {0: "aucun", 1: "piéton", 2: "véhicule", 4: "véhicule sur rail", 5: "animal domestique",
-  6: "animal sauvage", 9: "autre"};
-const CHOC = {0: "aucun", 1: "avant", 2: "avant droit", 3: "avant gauche", 4: "arrière", 5: "arrière droit",
-  6: "arrière gauche", 7: "côté droit", 8: "côté gauche", 9: "chocs multiples (tonneaux)"};
 const MANV = {0: "inconnue", 1: "sans changement de direction", 2: "même sens, même file", 3: "entre 2 files",
   4: "en marche arrière", 5: "à contresens", 6: "en franchissant le terre-plein central",
   7: "dans le couloir bus, même sens", 8: "dans le couloir bus, sens inverse", 9: "en s'insérant",
@@ -444,14 +426,6 @@ document.querySelectorAll("a[data-h]").forEach(el => el.addEventListener("click"
   croix.redraw();
 }));
 const resume = (n, total) => n === total ? "tous" : n === 0 ? "aucun" : `${n} / ${total}`;
-function filtre(r) {
-  if (!$("s" + r[2]).checked) return false;
-  if (!$("t" + r[14]).checked) return false;
-  if ($("fSeul").checked && !r[5]) return false;
-  if ($("fNuit").checked && !r[6]) return false;
-  return true;
-}
-
 // Calque canvas : des milliers de croix sans ralentir la carte
 const CrossLayer = L.Layer.extend({
   onAdd(m) {
@@ -995,20 +969,6 @@ $("effacer").addEventListener("click", () => {     // les resultats restent en m
 </html>
 """
 
-ACC = {"eclairage": "éclairage", "Crepuscule": "Crépuscule", "agglomeration": "agglomération",
-       "allume": "allumé", "departementale": "départementale", "reseau": "réseau",
-       "metropole": "métropole"}
-
-
-def accents(d):
-    out = {}
-    for k, v in d.items():
-        for a, b in ACC.items():
-            v = v.replace(a, b)
-        out[k] = v
-    return out
-
-
 RELAIS = {"/proxy/wfs": "https://data.geopf.fr/wfs/ows",
           "/proxy/itineraire": "https://data.geopf.fr/navigation/itineraire",
           "/proxy/navcap": "https://data.geopf.fr/navigation/getcapabilities",
@@ -1083,54 +1043,28 @@ def servir(dossier, nom_page, port):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Carte des accidents BAAC (croix rouges)")
-    ap.add_argument("dossier", nargs="?", default=".")
-    f_cle = Path(__file__).with_name("cle_carto.txt")
-    cle_defaut = os.environ.get("CARTO_API_KEY", "") or (
-        f_cle.read_text(encoding="utf-8-sig").strip() if f_cle.exists() else "")
-    ap.add_argument("--cle-carto", default=cle_defaut,
-                    help="cle gratuite CARTO (facultatif, sinon fond OpenStreetMap)")
-    ap.add_argument("--sans-serveur", action="store_true",
-                    help="creer la carte sans l'ouvrir via le serveur local")
+    ap = argparse.ArgumentParser(description="Carte interactive des accidents du BAAC")
+    ap.add_argument("dossier", nargs="?", default=".", help="dossier contenant les 4 CSV du BAAC")
+    ap.add_argument("--sortie", default="docs",
+                    help="dossier de la carte, a cote du script (defaut : docs, pour GitHub Pages)")
+    ap.add_argument("--sans-apercu", action="store_true", help="ecrire la carte sans l'ouvrir")
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--publier", nargs="?", const="docs", metavar="DOSSIER",
-                    help="ecrire la version en ligne (index.html, sans cle CARTO) dans DOSSIER "
-                         "(par defaut : docs, a cote du script) pour GitHub Pages")
     args = ap.parse_args()
-    if args.publier and "--cle-carto" not in sys.argv:
-        args.cle_carto = ""                   # jamais la cle personnelle dans un site public
-    dossier = Path(args.dossier).expanduser().resolve()
-    lignes, annee = preparer(dossier)
-    out = dossier / f"resultats_baac_{annee}"
-    out.mkdir(exist_ok=True)
-    cle = re.sub(r"[^A-Za-z0-9_\-.]", "", args.cle_carto or "")
-    print("  fond de carte : " + ("CARTO (cle trouvee)" if cle else "OpenStreetMap (sans cle)"))
-    page = (HTML.replace("__ANNEE__", str(annee))
-                .replace("__CLE_CARTO__", cle)
 
-                .replace("__LUM__", json.dumps(accents(LUM), ensure_ascii=False))
-                .replace("__AGG__", json.dumps(accents(AGG), ensure_ascii=False))
-                .replace("__CATR__", json.dumps(accents(CATR), ensure_ascii=False))
+    lignes, annee = preparer(Path(args.dossier).expanduser().resolve())
+    cible = Path(args.sortie)
+    if not cible.is_absolute():
+        cible = Path(__file__).resolve().parent / cible
+    cible.mkdir(parents=True, exist_ok=True)
+    page = (HTML.replace("__ANNEE__", str(annee))
                 .replace("__DATA__", json.dumps(lignes, ensure_ascii=False,
                                                 separators=(",", ":")).replace("</", "<\\/")))
-    if args.publier:
-        cible = Path(args.publier)
-        if not cible.is_absolute():
-            cible = Path(__file__).resolve().parent / cible
-        cible.mkdir(parents=True, exist_ok=True)
-        chemin = cible / "index.html"
-        chemin.write_text(page, encoding="utf-8")
-        (cible / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages : fichier servi tel quel
-        print(f"Version en ligne creee : {chemin}  ({chemin.stat().st_size / 1e6:.1f} Mo)")
-        if chemin.stat().st_size > 50e6:
-            print("  Attention : plus de 50 Mo, GitHub affichera un avertissement.")
-        print("  Prochaine etape : git add, commit et push (voir README).")
-        return
-    chemin = out / f"carte_accidents_{annee}.html"
+    chemin = cible / "index.html"
     chemin.write_text(page, encoding="utf-8")
+    (cible / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages : servi tel quel
     print(f"Carte creee : {chemin}  ({chemin.stat().st_size / 1e6:.1f} Mo)")
-    if not args.sans_serveur:
-        servir(out, chemin.name, args.port)
+    if not args.sans_apercu:
+        servir(cible, chemin.name, args.port)
 
 
 if __name__ == "__main__":
